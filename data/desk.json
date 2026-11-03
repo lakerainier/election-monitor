@@ -1,0 +1,32 @@
+{
+  "masthead": "Election 2026 Results Desk",
+  "startFetchingAt": "2026-11-03T20:00:00-08:00",
+  "sources": {
+    "summaryCsv": "https://election-results-csv.kingcounty.gov",
+    "precinctCsv": "",
+    "waStateCsv": "https://results.vote.wa.gov/results/20261103/export/20261103_AllState.csv",
+    "nationalSheetCsv": ""
+  },
+  "ballotsLeft": {},
+  "stateBallotsLeft": {},
+  "settings": {
+    "turnout": 0.72,
+    "turnoutSd": 0.04
+  },
+  "calls": {},
+  "aliases": {},
+  "national": {
+    "races": {},
+    "house": {
+      "d": 0,
+      "r": 0
+    }
+  },
+  "posts": [
+    {
+      "ts": "2026-10-31T16:00:00-07:00",
+      "title": "Desk is set up for Nov. 3",
+      "body": "Ballots are due in a drop box by 8 p.m. Tuesday or postmarked by Election Day. King County Elections usually posts its first count shortly after 8 p.m., then one update each weekday afternoon. Until then, every number on this page is a pre-count forecast built from the August primary and public polling."
+    }
+  ]
+}
