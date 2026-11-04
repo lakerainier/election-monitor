@@ -67,16 +67,45 @@ if (!force && start && now < start) {
   log(`Before startFetchingAt (${desk.startFetchingAt}); skipping King County and Secretary of State feeds.`);
 } else {
   let K = null, Pr = null, W = null;
+  // VoteWA (results.votewa.gov) public results API: the state's official results system this year.
+  // One JSON call per jurisdiction; converted to rows the existing reader understands.
+  const vw = { base: "https://results.votewa.gov/results/public/api", election: "20261103", county: "king-county-wa", ...(desk.sources?.votewa || {}) };
+  const pickText = (n) => Array.isArray(n) ? String((n.find((x) => x?.languageId === "en") || n[0] || {}).text || "").trim() : String(n || "").trim();
+  const q = (v) => /[",\n]/.test(v) ? `"${String(v).replace(/"/g, '""')}"` : String(v);
+  function votewaRows(data) {
+    const rows = ["Race,Candidate,Votes"];
+    for (const it of data.ballotItems || []) {
+      const race = pickText(it.name); if (!race) continue;
+      for (const o of it.summaryResults?.ballotOptions || []) rows.push([q(race), q(pickText(o.name) || "Option"), Number(o.voteCount) || 0].join(","));
+    }
+    const ballots = (data.voterTurnout || []).reduce((a, r) => a + (Number(r?.ballotsCast) || 0), 0);
+    return { csv: rows.join("\n"), ballots: ballots || null, items: (data.ballotItems || []).length };
+  }
+  async function votewa(slug) {
+    const url = env(slug === vw.county ? "VOTEWA_KC" : "VOTEWA_STATE", `${vw.base}/elections/${slug}/${vw.election}/data`);
+    if (!url) return null;
+    for (let i = 0; i < 3; i++) {
+      try {
+        const text = await get(url);
+        const { csv, ballots, items } = votewaRows(JSON.parse(text));
+        const res = ingest(csv, desk.aliases); res.countyBallots = ballots;
+        log(`VoteWA ${slug}: ${items} contests, matched ${Object.keys(res.matched).join(", ") || "nothing"}${ballots ? `; ${ballots} ballots counted` : ""}`);
+        return res;
+      } catch (e) { log(`VoteWA ${slug} failed:`, e.message); if (i < 2 && /^https?:/.test(url)) await new Promise((r) => setTimeout(r, 4000 * (i + 1))); else break; }
+    }
+    return null;
+  }
+  if (vw.base) { K = await votewa(vw.county); W = await votewa("washington"); }
   // King County's live file: try the configured address, then the address its results PDF uses.
   const kcTry = [...new Set([src.summary, "https://election-results-01.kingcounty.gov/results.csv", "https://election-results-csv.kingcounty.gov"].filter(Boolean))];
-  for (const u of kcTry) {
+  for (const u of K ? [] : kcTry) {
     let text = "";
     try { text = await get(u); K = ingest(text, desk.aliases); log(`King County file: ${u}`); break; }
     catch (e) { log(`King County ${u} failed:`, e.message, text ? `(starts: ${JSON.stringify(text.slice(0, 120))})` : ""); }
     if (process.env.SUMMARY_CSV) break;
   }
   try { if (src.precinct) Pr = ingest(await get(src.precinct), desk.aliases); } catch (e) { log("King County precinct file failed:", e.message); }
-  try { if (src.wa) W = ingest(await get(src.wa), desk.aliases); } catch (e) { log("Secretary of State file failed:", e.message); }
+  if (!W) try { if (src.wa) W = ingest(await get(src.wa), desk.aliases); } catch (e) { log("Secretary of State file failed:", e.message); }
   if (K) log(`King County: ${K.rows} rows, matched ${Object.keys(K.matched).length}; untracked ${K.unmatched.length}`);
   if (Pr) log(`King County precincts: ${Pr.rows} rows, matched ${Object.keys(Pr.matched).length}`);
   if (W) log(`Washington: ${W.rows} rows, matched ${Object.keys(W.matched).join(", ") || "nothing"}`);
