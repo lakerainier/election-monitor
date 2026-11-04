@@ -49,7 +49,7 @@ const RACES = [
   desc:"Re-enacts the 2024 parental-rights law (Initiative 2081) as originally written, undoing the Legislature's 2025 changes.",
   a:{n:"Yes",s:"Approve"},b:{n:"No",s:"Reject"},src:"state",regs:{full:4950000,kc:1480000,sea:525000},decides:true,lean:"b",reg:525000,uv:.96,
   prior:{a:.48,sd:.08,note:"No public statewide polling found. Same 2024 benchmarks as I-638; a re-enactment of a law the Legislature once passed, kept wide."},priorSea:{a:.33,sd:.08,note:"No Seattle polling found. Same Let's Go Washington benchmark as I-638, with a slightly higher prior because the measure re-enacts a law the Legislature once passed."},
-  match:[/initiative[^0-9]*\b1\b(?!\d)|measure no\.? ?1\b(?!\d)/],optm:{a:[/^yes/],b:[/^no/]}},
+  match:[/il26-0*1\b|initiative[^0-9]*\b1\b(?!\d)|measure no\.? ?1\b(?!\d)/],optm:{a:[/^yes/],b:[/^no/]}},
  {id:"ld43-sen",g:"leg",title:"43rd District State Senator",short:"LD43 Senate",kind:"cand",
   desc:"Capitol Hill, the U District, Wallingford, Fremont. Senate Majority Leader Jamie Pedersen faces a challenge from his left.",
   a:{n:"Jamie Pedersen",s:"Democrat, incumbent"},b:{n:"Hannah Sabio-Howell",s:"Democrat"},src:"kc",decides:true,lean:"b",reg:118000,uv:.92,
