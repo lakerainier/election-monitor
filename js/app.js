@@ -114,16 +114,17 @@ function barHTML(race,m,big){
   if(prior){a=m.mean;b=1-a}else{const t=m.last;a=t.a/(t.a+t.b);b=1-a}
   return`<div class="bar ${prior?"prior":""}" style="height:${big?18:12}px" role="img" aria-label="${esc(race.a.n)} ${pct(a)}, ${esc(race.b.n)} ${pct(b)}${prior?" (forecast)":""}"><i class="ba" style="width:${a*100}%"></i><i class="bb" style="width:${b*100}%"></i><span class="mid"></span></div>`;
 }
+function headScope(race){if(race.src!=="state"||hasScope(race,"full"))return"full";return hasScope(race,"kc")?"kc":"full"}
 function scopeShare(race,scope){const ds=D().drops;for(let i=ds.length-1;i>=0;i--){const v=tally(ds[i],race,scope);if(v&&v.a+v.b>0)return v.a/(v.a+v.b)}return null}
 function localScopeLine(race){if(race.src!=="state")return"";const sea=scopeShare(race,"sea"),kc=scopeShare(race,"kc");if(sea==null&&kc==null)return(race.g==="state"||race.g==="court")&&D().drops.length?`<div class="foot"><span>Seattle and King County splits appear as county results post.</span></div>`:"";
   return`<div class="foot scopes">${sea!=null?`<span>Seattle: <b class="num">${esc(race.a.n)} ${pct(sea,0)}</b></span>`:""}${kc!=null?`<span>King County: <b class="num">${esc(race.a.n)} ${pct(kc,0)}</b></span>`:""}</div>`}
 function card(race){
-  const m=project(race);
+  const hs=headScope(race),m=project(race,hs);
   if(race.kind==="uncontested")return`<a class="card" href="#race-${race.id}"><div class="head"><h3>${esc(race.short)}</h3>${chipFor(race,m)}</div><div class="opt"><span class="nm">${esc(race.a.n)} <small>${esc(race.a.s)}</small></span><span class="pc">Unopposed</span></div><p class="muted" style="font-size:.82rem">${esc(race.desc)}</p></a>`;
   const prior=m.status==="prior";const sa=prior?m.mean:m.s, lead=sa>=.5?"a":"b";
   const line=(k,share)=>`<div class="opt k${k} ${lead===k?"lead":""}"><span class="nm">${esc(race[k].n)}${race[k].s?` <small>${esc(race[k].s)}</small>`:""}</span><span class="pc">${pct(share)}</span></div>`;
   const foot=prior?`<span>Pre-count forecast · ${esc(race.a.n)} wins ${pct(m.pA,0)} of simulations</span>`:`<span class="num">${fmt(m.counted)} votes · ~${pct(m.share,0)} counted</span><span>Projected ${esc(race[m.mean>=.5?"a":"b"].n)} ${pct(Math.max(m.mean,1-m.mean))} · P ${pct(Math.max(m.pA,1-m.pA),0)}</span>`;
-  return`<a class="card" href="#race-${race.id}"><div class="head"><h3>${esc(race.short)}</h3>${chipFor(race,m)}</div>${line("a",sa)}${line("b",1-sa)}${barHTML(race,m)}<div class="foot">${foot}</div>${localScopeLine(race)}</a>`;
+  return`<a class="card" href="#race-${race.id}"><div class="head"><h3>${esc(race.short)}</h3>${chipFor(race,m)}</div>${line("a",sa)}${line("b",1-sa)}${barHTML(race,m)}<div class="foot">${foot}</div>${hs==="kc"?`<div class="foot"><span>King County count; the statewide total appears when the state posts it.</span></div>`:localScopeLine(race)}</a>`;
 }
 function overview(){ /* Seattle & Washington window */
   const data=D(), drops=data.drops, last=drops[drops.length-1];
@@ -180,7 +181,7 @@ function scopePanel(race){if(race.src!=="state")return"";const rows=[["full",rac
   return rows?`<div class="panel"><h3>Statewide, county and city</h3><div class="tbl-wrap"><table><thead><tr><th></th><th class="r">${esc(race.a.n)}</th><th class="r">Votes</th><th class="r">Projected</th></tr></thead><tbody>${rows}</tbody></table></div><p class="note" style="margin-top:.4rem">Each line runs the projection on its own count and ballots left.</p></div>`:""}
 function raceView(id){
   const race=RACE[id];if(!race)return`<p>That contest isn't on this page. <a href="#">Back to all results</a></p>`;
-  const m=project(race), call=D().calls[id];
+  const hs=headScope(race),m=project(race,hs), call=D().calls[id];
   const grp=GROUPS.find(g=>g[0]===race.g)[1];
   if(race.kind==="uncontested")return`<p class="crumbs"><a href="#seattle">Seattle &amp; Washington</a> / ${grp}</p><h1 style="margin-top:.5rem">${esc(race.title)}</h1><p class="lede">${esc(race.desc)} With no opponent on the ballot, no projection is needed.</p>`;
   const prior=m.status==="prior";
@@ -199,7 +200,7 @@ function raceView(id){
   const tbl=prior?"":`<div class="tbl-wrap"><table><thead><tr><th>Update</th><th>Posted</th><th class="r">${esc(race.a.n)}</th><th class="r">${esc(race.b.n)}</th><th class="r">${esc(race.a.n)} share</th><th class="r">New-ballot share</th></tr></thead><tbody>${m.series.map((x,i)=>{const inc=m.inc[i];return`<tr><td>${esc(x.d.label)}</td><td>${tstr(x.d.ts)}</td><td class="r">${fmt(x.t.a)}</td><td class="r">${fmt(x.t.b)}</td><td class="r">${pct(x.t.a/(x.t.a+x.t.b))}</td><td class="r">${inc?pct(inc.share):"–"}</td></tr>`}).join("")}</tbody></table></div>`;
   return`<p class="crumbs"><a href="#seattle">Seattle &amp; Washington</a> / ${grp}</p>
   <div class="row" style="justify-content:space-between;margin-top:.5rem"><h1>${esc(race.title)}</h1>${chipFor(race,m)}</div>
-  <p class="lede">${esc(race.desc)}${race.src==="state"?" Headline figures are the full contest from the Secretary of State; the Seattle and King County splits come from King County Elections.":""}</p>
+  <p class="lede">${esc(race.desc)}${race.src==="state"?(hs==="kc"?" The statewide count isn't available yet, so the figures below are King County's.":" Headline figures are the full contest from the Secretary of State; the King County and Seattle splits come from King County Elections."):""}</p>
   <div class="detail"><div>
    <div class="panel"><div class="big">${side("a")}${side("b")}</div>${barHTML(race,m,true)}
     ${call&&call.winner?`<p class="msg" style="margin-top:.75rem"><b>Desk call:</b> ${esc(race[call.winner].n)}, ${tstr(call.ts)}. ${esc(call.note||"")}</p>`:""}
