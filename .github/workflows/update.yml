@@ -1,0 +1,71 @@
+name: Update results
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+    inputs:
+      test_csv:
+        description: "Test only: a King County or Secretary of State results CSV URL. Prints what matched; publishes nothing."
+        type: string
+        default: ""
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: results
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Test a results file (no publishing)
+        if: inputs.test_csv != ''
+        env:
+          FORCE: "1"
+          SUMMARY_CSV: ${{ inputs.test_csv }}
+          PRECINCT_CSV: ${{ inputs.test_csv }}
+          WA_CSV: ${{ inputs.test_csv }}
+          OUT: /tmp/test-state.json
+        run: |
+          node scripts/fetch.mjs
+          node -e "const s=require('/tmp/test-state.json');const d=s.drops[0]||{totals:{}};for(const[k,v]of Object.entries(d.totals)){const f=v.full||{},c=v.sea;console.log(k.padEnd(12),'A',f.a,'B',f.b,'ballots',f.ballots,c?'Seattle A '+c.a+' B '+c.b:'')}"
+      - name: Fetch results
+        if: inputs.test_csv == ''
+        run: node scripts/fetch.mjs
+      - name: Commit new data
+        id: commit
+        if: inputs.test_csv == ''
+        run: |
+          if git diff --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            git config user.name "results-bot"
+            git config user.email "results-bot@users.noreply.github.com"
+            git add data/state.json
+            git commit -m "Results update $(TZ=America/Los_Angeles date '+%b %-d %-I:%M %p')"
+            git push
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Package site
+        if: inputs.test_csv == '' && (steps.commit.outputs.changed == 'true' || github.event_name != 'schedule')
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+      - name: Publish to GitHub Pages
+        id: deploy
+        if: inputs.test_csv == '' && (steps.commit.outputs.changed == 'true' || github.event_name != 'schedule')
+        uses: actions/deploy-pages@v4
