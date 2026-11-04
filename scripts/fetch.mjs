@@ -1,15 +1,17 @@
 // Builds data/state.json for the site. Run by .github/workflows/update.yml every five minutes.
 //  1. King County Elections results (summary CSV, and the precinct CSV when it exists)
 //  2. Washington Secretary of State statewide results CSV
-//  3. The desk's national results sheet (a Google Sheet published as CSV), or data/desk.json "national"
+//  3. civicAPI's free live national results (Senate, governors, House), with optional corrections
+//     from the desk's Google Sheet or data/desk.json "national"
 //  4. Editors' notes, calls and settings from data/desk.json
 // Each new local count becomes an "update"; each change to the national picture adds a point to the
 // chance-of-control history.
 //
 // Run locally:
-//   node scripts/fetch.mjs            (respects startFetchingAt for the automatic feeds)
+//   node scripts/fetch.mjs            (respects startFetchingAt for the King County and state feeds)
 //   FORCE=1 node scripts/fetch.mjs    (fetch now)
-// Test overrides: SUMMARY_CSV, PRECINCT_CSV, WA_CSV, NATIONAL_CSV (URL or local path), NOW (ISO time),
+// Test overrides: SUMMARY_CSV, PRECINCT_CSV, WA_CSV, NATIONAL_CSV (URL or local path), CIVIC_BASE (URL, or a
+//   local folder holding race-<id>.json and forecast-house.json), ALLOW_TEST=1, NOW (ISO time),
 //   OUT (write somewhere other than data/state.json, starting from an empty record).
 import fs from "node:fs";
 import vm from "node:vm";
@@ -92,7 +94,6 @@ if (!force && start && now < start) {
   else if (shrank) log("Vote totals went DOWN versus the last update. That usually means a wrong file; not recording. Check sources in desk.json.");
   else if (last && last.sig === sig) log("Local results: no change.");
   else {
-    // Keep any scope this run didn't see (e.g. one feed is briefly down) from the previous update.
     if (last) for (const id of Object.keys(last.totals || {})) {
       totals[id] ||= {};
       for (const s of ["full", "kc", "sea"]) if (!totals[id][s] && last.totals[id][s]) totals[id][s] = last.totals[id][s];
@@ -110,7 +111,76 @@ if (!force && start && now < start) {
   }
 }
 
-/* ---------- 3: national desk sheet ---------- */
+/* ---------- 3a: civicAPI live national results (free, keyless; attribution required) ---------- */
+const norm = (x) => String(x || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z ]/g, " ").replace(/\s+/g, " ").trim();
+const lastName = (x) => norm(x).split(" ").filter((w) => !/^(jr|sr|ii|iii|iv)$/.test(w)).pop() || "";
+function findCand(cands, name, party) {
+  const n = norm(name), l = lastName(name);
+  const top = (a) => a.sort((x, y) => (y.votes || 0) - (x.votes || 0))[0] || null;
+  return cands.find((c) => n && norm(c.name) === n) || top(cands.filter((c) => l && lastName(c.name) === l)) || (party ? top(cands.filter((c) => c.party === party)) : null);
+}
+const civicBase = env("CIVIC_BASE", desk.sources?.civicApi ?? "https://civicapi.org/api/v2");
+const civicURL = (p, file) => (/^https?:/.test(civicBase) ? `${civicBase}/${p}` : path.join(path.resolve(root, civicBase), file));
+async function getJSON(p, file) { return JSON.parse(await get(civicURL(p, file))); }
+async function civicNational() {
+  if (!civicBase) return null;
+  const ids = { S: 87528, G: 87535, H: 87524, ...(desk.sources?.civicRaceIds || {}) };
+  const out = { races: {}, house: { d: 0, r: 0 }, updated: null, ok: false };
+  const allowTest = !!desk.allowTestData || process.env.ALLOW_TEST === "1";
+  for (const ch of ["S", "G"]) {
+    let doc;
+    try { doc = await getJSON(`race/${ids[ch]}`, `race-${ids[ch]}.json`); } catch (e) { log(`civicAPI ${ch === "S" ? "Senate" : "governors"} failed:`, e.message); continue; }
+    if (doc.test_data && !allowTest) { log(`civicAPI ${ch}: flagged as test data; ignored`); continue; }
+    out.ok = true; out.updated = doc.last_updated || out.updated;
+    for (const def of ch === "S" ? NAT.SENATE : NAT.GOVS) {
+      const reg = doc.region_results?.[def.st.toLowerCase()]; if (!reg) continue;
+      const cands = reg.candidates || [];
+      const dc = findCand(cands, def.d, def.dp === "I" ? null : "Democratic"), rc = findCand(cands, def.r, "Republican");
+      const tot = cands.reduce((a, c) => a + (c.votes || 0), 0);
+      const w = cands.find((c) => c.winner);
+      const call = w ? (w === dc ? (def.dp === "I" ? "I" : "D") : w === rc ? "R" : w.party === "Republican" ? "R" : w.party === "Democratic" ? "D" : "I") : "";
+      if (!tot && !call) continue;
+      const dv = dc ? dc.votes || 0 : 0, rv = rc ? rc.votes || 0 : 0;
+      out.races[def.id] = { d: dv, r: rv, o: Math.max(0, tot - dv - rv), exp: reg.percent_reporting ?? "", call };
+    }
+  }
+  try {
+    const doc = await getJSON(`race/${ids.H}`, `race-${ids.H}.json`);
+    if (doc.test_data && !allowTest) log("civicAPI House: flagged as test data; ignored");
+    else {
+      out.ok = true;
+      let fc = state.national.houseForecast;
+      if (!fc || !fc.fetched || now - new Date(fc.fetched) > 6 * 3600e3) {
+        try {
+          const f = await getJSON("forecast/house/2026/civicapi", "forecast-house.json");
+          const cats = { sd: 0, ld: 0, tu: 0, lr: 0, sr: 0 }, watch = {};
+          const cat = (r) => /^(safe|likely) d/i.test(r) ? "sd" : /^(lean|tilt) d/i.test(r) ? "ld" : /^toss/i.test(r) ? "tu" : /^(lean|tilt) r/i.test(r) ? "lr" : "sr";
+          for (const [k, v] of Object.entries(f.states || {})) { const c = cat(v.rating || ""); cats[c]++; if (c === "ld" || c === "tu" || c === "lr") watch[k.toUpperCase()] = { rating: c, dn: v.democratic || "", rn: v.republican || "" }; }
+          if (Object.values(cats).reduce((a, b) => a + b, 0) === 435) { fc = { fetched: now.toISOString(), cats, watch }; state.national.houseForecast = fc; log(`civicAPI House ratings: ${JSON.stringify(cats)}`); }
+          else log("civicAPI House forecast does not cover 435 seats; keeping Cook's ratings");
+        } catch (e) { log("civicAPI House forecast failed:", e.message); }
+      }
+      for (const [k, reg] of Object.entries(doc.region_results || {})) {
+        const cands = reg.candidates || [], w = cands.find((c) => c.winner);
+        if (w) { if (w.party === "Democratic") out.house.d++; else if (w.party === "Republican") out.house.r++; }
+        const key = k.toUpperCase(), wt = fc?.watch?.[key];
+        if (!wt) continue;
+        const dc = findCand(cands, wt.dn, "Democratic"), rc = findCand(cands, wt.rn, "Republican");
+        const tot = cands.reduce((a, c) => a + (c.votes || 0), 0);
+        const row = { label: key, dn: dc?.name || wt.dn || "Democrat", rn: rc?.name || wt.rn || "Republican", rating: wt.rating };
+        if (tot) Object.assign(row, { d: dc?.votes || 0, r: rc?.votes || 0, o: Math.max(0, tot - (dc?.votes || 0) - (rc?.votes || 0)), exp: reg.percent_reporting ?? "" });
+        if (w) row.call = w.party === "Republican" ? "R" : w.party === "Democratic" ? "D" : "I";
+        out.races["H-" + key] = row;
+      }
+      if (fc?.cats) { out.houseCats = fc.cats; out.houseCatSource = "civicAPI forecast rating"; }
+    }
+  } catch (e) { log("civicAPI House failed:", e.message); }
+  log(`civicAPI: ${Object.keys(out.races).filter((k) => !/^H-/.test(k)).length} Senate/governor races with votes or calls; House seats called D ${out.house.d}, R ${out.house.r}; ${Object.keys(out.races).filter((k) => /^H-/.test(k)).length} competitive districts tracked`);
+  return out.ok ? out : null;
+}
+const civ = await civicNational();
+
+/* ---------- 3b: national desk sheet (optional corrections) ---------- */
 function readSheet(text) {
   const rows = parseCSV(text.replace(/^﻿/, ""));
   const h = rows[0].map((x) => x.trim().toLowerCase().replace(/[^a-z_]/g, ""));
@@ -125,33 +195,47 @@ function readSheet(text) {
     if (id === "HOUSE") { house = { d: +g(c.d).replace(/[, ]/g, "") || 0, r: +g(c.r).replace(/[, ]/g, "") || 0 }; continue; }
     if (!/^[SGH]-/.test(id)) continue;
     const v = { d: g(c.d), r: g(c.r), o: g(c.o), exp: g(c.exp), call: g(c.call), ts: g(c.ts), note: g(c.note), label: g(c.label), dn: g(c.dn), rn: g(c.rn), rating: g(c.rating) };
-    if (Object.values(v).some(Boolean)) races[id] = Object.fromEntries(Object.entries(v).filter(([, x]) => x !== ""));
+    races[id] = Object.fromEntries(Object.entries(v).filter(([, x]) => x !== ""));
   }
   return { races, house };
 }
-let nat = null;
+let sheet = null;
 try {
-  if (src.national) { nat = readSheet(await get(src.national)); log(`National sheet: ${Object.keys(nat.races).length} races, House calls D ${nat.house.d} R ${nat.house.r}`); }
-} catch (e) { log("National sheet failed:", e.message, "(keeping the last national data)"); }
-if (!nat && desk.national) nat = { races: desk.national.races || {}, house: desk.national.house || { d: 0, r: 0 } };
-if (nat) {
+  if (src.national) { sheet = readSheet(await get(src.national)); log(`National sheet: ${Object.keys(sheet.races).length} rows, House calls D ${sheet.house.d} R ${sheet.house.r}`); }
+} catch (e) { log("National sheet failed:", e.message); }
+if (!sheet && desk.national) sheet = { races: desk.national.races || {}, house: desk.national.house || { d: 0, r: 0 } };
+// Merge: civicAPI first; any value the desk enters overrides it, field by field.
+if (civ || sheet) {
+  const races = civ ? JSON.parse(JSON.stringify(civ.races)) : JSON.parse(JSON.stringify(state.national.races || {}));
+  const MEANINGFUL = ["d", "r", "o", "exp", "call", "ts", "note", "rating"];
+  for (const [id, v] of Object.entries(sheet?.races || {})) {
+    const isHouse = /^H-/.test(id);
+    const entered = Object.fromEntries(Object.entries(v).filter(([k]) => isHouse || MEANINGFUL.includes(k)));
+    if (!Object.keys(entered).some((k) => MEANINGFUL.includes(k)) && !isHouse) continue;
+    races[id] = { ...(races[id] || {}), ...entered, desk: true };
+  }
+  const house = sheet && (sheet.house.d || sheet.house.r) ? sheet.house : civ?.house || state.national.house || { d: 0, r: 0 };
   const known = new Set([...NAT.SENATE, ...NAT.GOVS].map((d) => d.id));
-  const unknown = Object.keys(nat.races).filter((id) => !known.has(id) && !/^H-/.test(id));
-  if (unknown.length) log("Unknown race IDs in the national sheet (ignored by the model):", unknown.join(", "));
-  const prev = JSON.stringify([state.national.races, state.national.house]);
-  state.national.races = nat.races; state.national.house = nat.house;
-  if (JSON.stringify([nat.races, nat.house]) !== prev) dataChanged = true;
+  const unknown = Object.keys(races).filter((id) => !known.has(id) && !/^H-/.test(id));
+  if (unknown.length) log("Unknown race IDs (ignored by the model):", unknown.join(", "));
+  const prev = JSON.stringify([state.national.races, state.national.house, state.national.houseCats]);
+  state.national.races = races; state.national.house = house;
+  if (civ?.houseCats) { state.national.houseCats = civ.houseCats; state.national.houseCatSource = civ.houseCatSource; }
+  if (civ?.updated) state.national.civicUpdated = civ.updated;
+  if (JSON.stringify([races, house, state.national.houseCats]) !== prev) dataChanged = true;
 }
+
 // chance-of-control history
 {
-  const o = NAT.simulate(state.national, { K: 3000 });
-  const pnt = { ts: now.toISOString(), s: +o.senate.pD.toFixed(3), h: +o.house.pD.toFixed(3), g: +o.gov.pD.toFixed(3) };
-  const H = state.national.history, lastH = H[H.length - 1];
-  const moved = !lastH || ["s", "h", "g"].some((k) => Math.abs(pnt[k] - lastH[k]) >= 0.005);
-  const anyData = Object.keys(state.national.races).length || state.national.house.d || state.national.house.r;
-  if (anyData && moved) { if (!H.length) H.push({ ...NAT_PRIOR(), ts: new Date(now.getTime() - 60000).toISOString() }); H.push(pnt); log(`Control odds: Senate D ${pnt.s}, House D ${pnt.h}, Governors D ${pnt.g}`); }
+  const anyData = Object.values(state.national.races).some((v) => v.d || v.r || v.call) || state.national.house.d || state.national.house.r;
+  if (anyData) {
+    const o = NAT.simulate(state.national, { K: 3000 });
+    const pnt = { ts: now.toISOString(), s: +o.senate.pD.toFixed(3), h: +o.house.pD.toFixed(3), g: +o.gov.pD.toFixed(3) };
+    const H = state.national.history;
+    if (!H.length) { const p0 = NAT.simulate({ houseCats: state.national.houseCats }, { K: 3000 }); H.push({ ts: new Date(now.getTime() - 60000).toISOString(), s: +p0.senate.pD.toFixed(3), h: +p0.house.pD.toFixed(3), g: +p0.gov.pD.toFixed(3) }); }
+    if (["s", "h", "g"].some((k) => Math.abs(pnt[k] - H[H.length - 1][k]) >= 0.005)) { H.push(pnt); log(`Control odds: Senate D ${pnt.s}, House D ${pnt.h}, Governors D ${pnt.g}`); }
+  }
 }
-function NAT_PRIOR() { const o = NAT.simulate({}, { K: 3000 }); return { s: +o.senate.pD.toFixed(3), h: +o.house.pD.toFixed(3), g: +o.gov.pD.toFixed(3) }; }
 
 /* ---------- 4: editors' notes ---------- */
 for (const d of state.drops) {
