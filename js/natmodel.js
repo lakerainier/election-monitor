@@ -123,6 +123,7 @@ function houseWatch(inputs){
 function simulate(nat,opts){
   opts=opts||{};const K=opts.K||PARAMS.K;
   const inputs=readInputs(nat);
+  const CATS=(nat&&nat.houseCats)?HOUSE_CATS.map(c=>[c[0],c[1],nat.houseCats[c[0]]!=null?nat.houseCats[c[0]]:c[2],c[3]]):HOUSE_CATS;
   const watch=houseWatch(inputs);
   const all=[...SENATE,...GOVS,...watch];
   const S=all.map(def=>({def,...raceState(def,inputs.races[def.id])}));
@@ -130,7 +131,7 @@ function simulate(nat,opts){
   let W=0,WR=0;S.forEach(x=>{if(x.has&&!x.call&&x.def.chamber!=="H"){const w=x.f*x.f;W+=w;WR+=w*(x.c-x.def.m)}});
   const delta=WR/(W+PARAMS.shrink), natSd=PARAMS.natSd*Math.sqrt(PARAMS.shrink/(W+PARAMS.shrink));
   // House pool: remove called seats (listed races by their rating; bulk calls from safest first).
-  const pool=Object.fromEntries(HOUSE_CATS.map(c=>[c[0],c[2]]));let calledH={D:0,R:0};
+  const pool=Object.fromEntries(CATS.map(c=>[c[0],c[2]]));let calledH={D:0,R:0};
   watch.forEach(w=>{const st=S.find(x=>x.def.id===w.id);if(st.call){calledH[st.call==="R"?"R":"D"]++;pool[w.rating]=Math.max(0,pool[w.rating]-1)}else pool[w.rating]=Math.max(0,pool[w.rating]-1)});
   const extra={D:Math.max(0,inputs.house.d-calledH.D),R:Math.max(0,inputs.house.r-calledH.R)};
   const take=(order,n)=>{for(const k of order){const t=Math.min(pool[k],n);pool[k]-=t;n-=t;if(!n)break}};
@@ -139,7 +140,7 @@ function simulate(nat,opts){
   const r=rng(opts.seed||(1234567+Math.round(W*1000)+S.reduce((a,x)=>a+(x.call?x.def.id.length*7:0)+(x.has?Math.round(x.c*10):0),0)));
   const per=S.map(()=>({w:0,margins:new Float32Array(K),bins:new Int32Array(41)}));
   const sen=new Int16Array(K),senI=new Int16Array(K),gov=new Int16Array(K),house=new Int16Array(K);
-  const catList=HOUSE_CATS.filter(c=>pool[c[0]]>0);
+  const catList=CATS.filter(c=>pool[c[0]]>0);
   for(let k=0;k<K;k++){
     const z=delta+natSd*gauss(r);
     let sD=0,sI=0,gD=0,hD=0;
@@ -171,7 +172,7 @@ function simulate(nat,opts){
     senate:{pD:pSD/K,pR:pSR/K,pPivot:1-(pSD+pSR)/K,medD:nS.D+med(sen),medI:med(senI),distD:dist(sen,nS.D),called:calledS,notUp:nS,
       senI:Array.from(senI)},
     gov:{pD:pGD/K,pR:pGR/K,pTie:1-(pGD+pGR)/K,medD:nG.D+med(gov),dist:dist(gov,nG.D),called:calledG,notUp:nG},
-    house:{pD:pHD/K,pR:1-pHD/K,medD:med(hTot),dist:dist(hTot,0),called:houseCalled,pool,watch:watch.map(w=>w.id)},
+    house:{pD:pHD/K,pR:1-pHD/K,medD:med(hTot),dist:dist(hTot,0),called:houseCalled,pool,cats:CATS,catSource:(nat&&nat.houseCatSource)||"Cook Political Report final ratings",watch:watch.map(w=>w.id)},
     K};
 }
 const NAT={ST,SENATE,GOVS,CHAMBERS,HOUSE_CATS,PARAMS,simulate,readInputs};

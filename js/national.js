@@ -131,7 +131,7 @@ function natHome(){
   const kind=NATMAP;
   return`<div class="natgrid"><div class="natmain">
    <h1>${anyCount?"Midterm results and projections":"The 2026 midterms: what to watch"}</h1>
-   <p class="lede">${anyCount?`Calls follow the Associated Press as recorded by our desk. Projections estimate the votes still uncounted and update as each state reports.`:"Thirty-five Senate seats, all 435 House seats and 36 governorships are on the ballot. Until votes are counted, every number here is a forecast built from final polling averages and race ratings."}</p>
+   <p class="lede">${anyCount?`Live counts and calls from civicAPI, checked every five minutes. Projections estimate the votes still uncounted and update as each state reports.`:"Thirty-five Senate seats, all 435 House seats and 36 governorships are on the ballot. Until votes are counted, every number here is a forecast built from final polling averages and race ratings."}</p>
    <div class="chambers">${chamberCard("S",sim)}${chamberCard("H",sim)}${chamberCard("G",sim)}</div>
    ${nat.history&&nat.history.length>1?`<section class="panel"><h3>The night so far</h3>${historySVG(nat.history)}</section>`:""}
    <section class="panel"><div class="row" style="justify-content:space-between"><h3>${kind==="S"?"Senate":"Governor"} map</h3><div class="seg-btns" role="group" aria-label="Map"><button class="btn ${kind==="S"?"on":""}" data-natmap="S">Senate</button><button class="btn ${kind==="G"?"on":""}" data-natmap="G">Governors</button></div></div>${usMap(kind,sim)}</section>
@@ -157,13 +157,13 @@ function natChamberPage(kind){
 }
 function CHAMBERS_NOTE(kind){return NAT.CHAMBERS[kind].notUpNote}
 function natHouse(sim){
-  const h=sim.house,cats=NAT.HOUSE_CATS;
+  const h=sim.house,cats=h.cats;
   const watch=h.watch.map(id=>sim.races[id]);
   const wrows=watch.map(x=>{const d=x.def;return`<tr><td><a href="#race-${d.id}"><b>${esc(d.label)}</b></a></td><td>${esc(d.d)}</td><td>${esc(d.r)}</td><td>${esc((cats.find(c=>c[0]===d.rating)||cats[2])[1])}</td><td class="r num">${x.has?pct(x.f,0):"–"}</td><td class="r num">${x.has?marginTxt(x.c,d):"–"}</td><td class="pcell">${probBar(x)}${chanceTxt(x)}</td><td>${natStatus(x)}</td></tr>`}).join("");
-  return`<p class="crumbs"><a href="#">National</a> / House</p><h1 style="margin-top:.5rem">House</h1><p class="lede">All 435 seats are up; 218 is a majority. Several states redrew their maps in the middle of the decade, so district-by-district comparisons with 2024 are unreliable. The model works from final race ratings and the seats the desk has recorded as called.</p>
+  return`<p class="crumbs"><a href="#">National</a> / House</p><h1 style="margin-top:.5rem">House</h1><p class="lede">All 435 seats are up; 218 is a majority. Several states redrew their maps in the middle of the decade, so district-by-district comparisons with 2024 are unreliable. The model works from race ratings, live counts in the competitive districts, and the seats already called.</p>
   <div class="chambers one">${chamberCard("H",sim)}</div>
   <section class="panel"><h3>Democratic House seats across ${fmt(sim.K)} simulations</h3>${histSVG(h.dist,200,260,218,"House seat distribution")}</section>
-  <section class="panel"><h3>Seats still to be decided, by rating</h3><div class="tbl-wrap"><table><thead><tr><th>Cook Political Report final rating</th><th class="r">Seats rated</th><th class="r">Still uncalled</th></tr></thead><tbody>${cats.map(c=>`<tr><td>${c[1]}</td><td class="r num">${c[2]}</td><td class="r num">${h.pool[c[0]]}</td></tr>`).join("")}<tr><td><b>Called</b></td><td></td><td class="r num">D ${h.called.D} · R ${h.called.R}</td></tr></tbody></table></div>
+  <section class="panel"><h3>Seats still to be decided, by rating</h3><div class="tbl-wrap"><table><thead><tr><th>${esc(h.catSource)}</th><th class="r">Seats rated</th><th class="r">Still uncalled</th></tr></thead><tbody>${cats.map(c=>`<tr><td>${c[1]}</td><td class="r num">${c[2]}</td><td class="r num">${h.pool[c[0]]}</td></tr>`).join("")}<tr><td><b>Called</b></td><td></td><td class="r num">D ${h.called.D} · R ${h.called.R}</td></tr></tbody></table></div>
    <p class="note" style="margin-top:.4rem">Called seats are removed from the safest ratings first unless the desk lists the district individually.</p></section>
   <section class="panel"><h3>House races we're watching</h3>${wrows?`<div class="tbl-wrap"><table class="nat"><thead><tr><th>District</th><th>Democrat</th><th>Republican</th><th>Rating</th><th class="r">Exp. vote in</th><th class="r">Margin now</th><th>Chance of winning</th><th>Status</th></tr></thead><tbody>${wrows}</tbody></table></div>`:`<p class="note" style="margin-top:.35rem">The desk adds districts here from its results sheet as the night goes on.</p>`}</section>
   <section class="panel"><h3>Washington's House races</h3><div class="grid" style="margin-top:.6rem">${["wa3","wa4","wa9","wa7"].map(id=>RACE[id]&&card(RACE[id])).join("")}</div></section>`;
@@ -188,7 +188,7 @@ function natRace(id){
   </div><div>
    <div class="panel"><h3>Where the forecast starts</h3><p class="note" style="margin-top:.35rem">${esc(d.src)}: ${marginTxt(d.m,d)}. The model adds a race-specific error of about ${NAT.PARAMS.raceSd} points and a nationwide error of ${NAT.PARAMS.natSd} points shared by every race, so polling misses move all states together.</p>
     ${Math.abs(sim.delta)>.05?`<p class="note" style="margin-top:.5rem">Counted votes so far suggest polls ${sim.delta>0?"underestimated Democrats":"underestimated Republicans"} by about <b>${Math.abs(sim.delta).toFixed(1)} points</b> nationally. That estimate is applied to every race not yet called.</p>`:""}</div>
-   <div class="panel"><h3>About these numbers</h3><p class="note" style="margin-top:.35rem">Vote counts and the share of expected vote counted are entered by the desk from official state results and the Associated Press. Calls follow the AP.</p></div>
+   <div class="panel"><h3>About these numbers</h3><p class="note" style="margin-top:.35rem">Vote counts, the share of the vote reported and race calls come from <a href="https://civicapi.org" target="_blank" rel="noopener">civicAPI</a>, checked every five minutes. Our desk can correct any number or call from its results sheet.</p></div>
    <div class="panel"><h3>Other ${ch.toLowerCase()} races</h3><div class="mini-list">${Object.values(sim.races).filter(y=>y.def.chamber===d.chamber&&y.def.id!==id).sort((a,b)=>Math.abs(a.pD-.5)-Math.abs(b.pD-.5)).slice(0,6).map(y=>`<a href="#race-${y.def.id}"><span>${esc(y.def.state||y.def.label)}</span>${probBar(y)}</a>`).join("")}</div></div>
   </div></div>`;
 }
