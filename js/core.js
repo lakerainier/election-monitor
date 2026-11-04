@@ -146,14 +146,18 @@ function ingest(text,aliases){aliases=aliases||{};
     let race=aliases[c.race]?RACE[aliases[c.race]]:RACES.find(R=>R.match.every(re=>re.test(lc)));
     if(race&&race.g!=="seattle"&&/city of seattle/.test(lc)&&!aliases[c.race])race=null;
     if(race&&race.g==="seattle"&&!/seattle/.test(lc))race=null;
-    if(!race||matched[race.id]){unmatched.push(c.race);continue}
+    if(!race){unmatched.push(c.race);continue}
     const pick=(obj,side)=>{if(!race[side])return 0;let s=0;for(const[k,v]of Object.entries(obj))if(race.optm[side].some(re=>re.test(k.toLowerCase())))s+=v;return s};
     const other=(obj)=>Object.entries(obj).filter(([k])=>!race.optm.a.some(re=>re.test(k.toLowerCase()))&&!(race.optm.b||[]).some(re=>re.test(k.toLowerCase()))).reduce((s,[,v])=>s+v,0);
     const t={a:pick(c.cands,"a"),b:pick(c.cands,"b"),other:other(c.cands),ballots:c.ballots||null,reg:c.reg||null,contest:c.race,
       sea:{a:pick(c.sea.cands,"a"),b:pick(c.sea.cands,"b"),ballots:c.sea.ballots||null,reg:c.sea.reg||null}};
     const byLD={};for(const[ld,L]of Object.entries(c.ld)){const a=pick(L.c,"a"),b=pick(L.c,"b");if(a+b>0)byLD[ld]={a,b,ballots:L.ballots||null}}
     const byPct={};for(const[pc,P]of Object.entries(c.pct)){const a=pick(P,"a"),b=pick(P,"b");if(a+b>0)byPct[pc]=[a,b]}
-    matched[race.id]={t,byLD,byPct};
+    // Several contests can fit one race's pattern (e.g. a district's Position 1 and 2): keep the one where this race's candidates got the most votes.
+    const score=t.a+t.b, prev=matched[race.id];
+    if(prev&&prev.score>=score){unmatched.push(c.race);continue}
+    if(prev)unmatched.push(prev.t.contest);
+    matched[race.id]={t,byLD,byPct,score};
   }
   return{matched,unmatched:[...new Set(unmatched)].sort(),countyBallots,rows:rows.length-1,precinctLevel:iPct>=0};
 }
