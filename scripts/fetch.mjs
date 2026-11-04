@@ -67,7 +67,14 @@ if (!force && start && now < start) {
   log(`Before startFetchingAt (${desk.startFetchingAt}); skipping King County and Secretary of State feeds.`);
 } else {
   let K = null, Pr = null, W = null;
-  try { if (src.summary) K = ingest(await get(src.summary), desk.aliases); } catch (e) { log("King County summary failed:", e.message); }
+  // King County's live file: try the configured address, then the address its results PDF uses.
+  const kcTry = [...new Set([src.summary, "https://election-results-01.kingcounty.gov/results.csv", "https://election-results-csv.kingcounty.gov"].filter(Boolean))];
+  for (const u of kcTry) {
+    let text = "";
+    try { text = await get(u); K = ingest(text, desk.aliases); log(`King County file: ${u}`); break; }
+    catch (e) { log(`King County ${u} failed:`, e.message, text ? `(starts: ${JSON.stringify(text.slice(0, 120))})` : ""); }
+    if (process.env.SUMMARY_CSV) break;
+  }
   try { if (src.precinct) Pr = ingest(await get(src.precinct), desk.aliases); } catch (e) { log("King County precinct file failed:", e.message); }
   try { if (src.wa) W = ingest(await get(src.wa), desk.aliases); } catch (e) { log("Secretary of State file failed:", e.message); }
   if (K) log(`King County: ${K.rows} rows, matched ${Object.keys(K.matched).length}; untracked ${K.unmatched.length}`);
@@ -90,7 +97,9 @@ if (!force && start && now < start) {
   const last = state.drops[state.drops.length - 1];
   const sig = JSON.stringify(ids.map((id) => [id, ...["full", "kc", "sea"].map((s) => (totals[id][s] ? [totals[id][s].a, totals[id][s].b] : 0))]));
   const shrank = last && ids.some((id) => ["full", "kc"].some((s) => last.totals?.[id]?.[s] && totals[id][s] && sum2(totals[id][s]) < sum2(last.totals[id][s]) * 0.98));
+  const anyVotes = ids.some((id) => ["full", "kc", "sea"].some((sc) => sum2(totals[id][sc]) > 0));
   if (!ids.length) log("No tracked contests in the local results files; nothing recorded.");
+  else if (!anyVotes) log(`Local results files read (${ids.length} contests matched) but no votes counted yet.`);
   else if (shrank) log("Vote totals went DOWN versus the last update. That usually means a wrong file; not recording. Check sources in desk.json.");
   else if (last && last.sig === sig) log("Local results: no change.");
   else {
