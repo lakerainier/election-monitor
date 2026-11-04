@@ -121,15 +121,30 @@ function findCand(cands, name, party) {
 }
 const civicBase = env("CIVIC_BASE", desk.sources?.civicApi ?? "https://civicapi.org/api/v2");
 const civicURL = (p, file) => (/^https?:/.test(civicBase) ? `${civicBase}/${p}` : path.join(path.resolve(root, civicBase), file));
-async function getJSON(p, file) { return JSON.parse(await get(civicURL(p, file))); }
+// civicAPI answers 502 or times out under election-night load: retry with backoff before giving up.
+async function getJSON(p, file) {
+  const url = civicURL(p, file), tries = /^https?:/.test(url) ? 4 : 1;
+  for (let i = 0; i < tries; i++) {
+    try {
+      if (!/^https?:/.test(url)) return JSON.parse(fs.readFileSync(url, "utf8"));
+      const r = await fetch(url, { headers: { "user-agent": "student-newsroom-results-desk (GitHub Actions)" }, signal: AbortSignal.timeout(20000) });
+      if (!r.ok) throw new Error(`${url} answered ${r.status}`);
+      return await r.json();
+    } catch (e) {
+      if (i === tries - 1) throw e;
+      log(`  ${p}: ${e.message}; retrying in ${[4, 10, 20][i]}s`);
+      await new Promise((res) => setTimeout(res, [4, 10, 20][i] * 1000));
+    }
+  }
+}
 async function civicNational() {
   if (!civicBase) return null;
   const ids = { S: 87528, G: 87535, H: 87524, ...(desk.sources?.civicRaceIds || {}) };
-  const out = { races: {}, house: { d: 0, r: 0 }, updated: null, ok: false };
+  const out = { races: {}, house: { d: 0, r: 0 }, updated: null, ok: false, failed: [] };
   const allowTest = !!desk.allowTestData || process.env.ALLOW_TEST === "1";
   for (const ch of ["S", "G"]) {
     let doc;
-    try { doc = await getJSON(`race/${ids[ch]}`, `race-${ids[ch]}.json`); } catch (e) { log(`civicAPI ${ch === "S" ? "Senate" : "governors"} failed:`, e.message); continue; }
+    try { doc = await getJSON(`race/${ids[ch]}`, `race-${ids[ch]}.json`); } catch (e) { log(`civicAPI ${ch === "S" ? "Senate" : "governors"} failed:`, e.message, "(keeping the last good numbers)"); out.failed.push(ch); continue; }
     if (doc.test_data && !allowTest) { log(`civicAPI ${ch}: flagged as test data; ignored`); continue; }
     out.ok = true; out.updated = doc.last_updated || out.updated;
     for (const def of ch === "S" ? NAT.SENATE : NAT.GOVS) {
@@ -174,9 +189,9 @@ async function civicNational() {
       }
       if (fc?.cats) { out.houseCats = fc.cats; out.houseCatSource = "civicAPI forecast rating"; }
     }
-  } catch (e) { log("civicAPI House failed:", e.message); }
+  } catch (e) { log("civicAPI House failed:", e.message, "(keeping the last good numbers)"); out.failed.push("H"); }
   log(`civicAPI: ${Object.keys(out.races).filter((k) => !/^H-/.test(k)).length} Senate/governor races with votes or calls; House seats called D ${out.house.d}, R ${out.house.r}; ${Object.keys(out.races).filter((k) => /^H-/.test(k)).length} competitive districts tracked`);
-  return out.ok ? out : null;
+  return out.ok ? out : null; // null = every document failed; the merge below then keeps everything as it was
 }
 const civ = await civicNational();
 
@@ -206,7 +221,9 @@ try {
 if (!sheet && desk.national) sheet = { races: desk.national.races || {}, house: desk.national.house || { d: 0, r: 0 } };
 // Merge: civicAPI first; any value the desk enters overrides it, field by field.
 if (civ || sheet) {
-  const races = civ ? JSON.parse(JSON.stringify(civ.races)) : JSON.parse(JSON.stringify(state.national.races || {}));
+  const prevRaces = state.national.races || {};
+  const races = civ ? JSON.parse(JSON.stringify(civ.races)) : JSON.parse(JSON.stringify(prevRaces));
+  if (civ) for (const ch of civ.failed) for (const [id, v] of Object.entries(prevRaces)) if (id.startsWith(ch + "-") && !v.desk) races[id] = v;
   const MEANINGFUL = ["d", "r", "o", "exp", "call", "ts", "note", "rating"];
   for (const [id, v] of Object.entries(sheet?.races || {})) {
     const isHouse = /^H-/.test(id);
@@ -214,7 +231,7 @@ if (civ || sheet) {
     if (!Object.keys(entered).some((k) => MEANINGFUL.includes(k)) && !isHouse) continue;
     races[id] = { ...(races[id] || {}), ...entered, desk: true };
   }
-  const house = sheet && (sheet.house.d || sheet.house.r) ? sheet.house : civ?.house || state.national.house || { d: 0, r: 0 };
+  const house = sheet && (sheet.house.d || sheet.house.r) ? sheet.house : civ && !civ.failed.includes("H") ? civ.house : state.national.house || { d: 0, r: 0 };
   const known = new Set([...NAT.SENATE, ...NAT.GOVS].map((d) => d.id));
   const unknown = Object.keys(races).filter((id) => !known.has(id) && !/^H-/.test(id));
   if (unknown.length) log("Unknown race IDs (ignored by the model):", unknown.join(", "));
