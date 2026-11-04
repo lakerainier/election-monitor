@@ -119,7 +119,7 @@ function sortBtns(){return`<div class="seg-btns" role="group" aria-label="Sort">
 /* ---------- Seattle & Washington rail ---------- */
 function localRail(){
   const ids=["sea-prop1","sea-d5","i645","i638","wa3","ld43-sen","kc-d2","wa9"];
-  const rows=ids.map(id=>RACE[id]).filter(Boolean).map(race=>{const m=project(race);const prior=m.status==="prior";const sa=prior?m.mean:m.s;const lead=sa>=.5?"a":"b";
+  const rows=ids.map(id=>RACE[id]).filter(Boolean).map(race=>{const m=project(race,headScope(race));const prior=m.status==="prior";const sa=prior?m.mean:m.s;const lead=sa>=.5?"a":"b";
     return`<a class="lr" href="#race-${race.id}"><div class="lr-h"><span>${esc(race.short)}</span>${chipFor(race,m)}</div><div class="lr-o"><span class="${lead==="a"?"lead":""}">${esc(race.a.n)} <b class="num">${pct(sa,0)}</b></span><span class="${lead==="b"?"lead":""}">${esc(race.b.n)} <b class="num">${pct(1-sa,0)}</b></span></div>${barHTML(race,m)}</a>`}).join("");
   const last=D().drops[D().drops.length-1];
   return`<aside class="local-rail" aria-label="Seattle and Washington"><div class="lr-top"><span class="eyebrow">Second window</span><h2>Seattle &amp; Washington</h2><p class="note">${last?`King County update: ${esc(last.label)}, ${tstr(last.ts)}.`:"King County posts its first count shortly after 8 p.m."}</p></div>${rows}<a class="btn" href="#seattle" style="justify-content:center;margin-top:.5rem">All Seattle and Washington results</a></aside>`;
