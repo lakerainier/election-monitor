@@ -137,14 +137,35 @@ async function getJSON(p, file) {
     }
   }
 }
+// A public cache of the same civicAPI documents, run by elections.aguywithascarf.com (open-source, CORS-open).
+// It keeps the last good copy when civicAPI is overloaded. Set sources.civicCache to "" to skip it.
+const civicCache = env("CIVIC_CACHE", desk.sources?.civicCache ?? "https://atgelibbknccvxtuolay.supabase.co/functions/v1/elections-cache");
+async function getCache(kind) {
+  if (!civicCache) return null;
+  try {
+    const url = /^https?:/.test(civicCache) ? `${civicCache}?k=${kind}` : path.join(path.resolve(root, civicCache), `cache-${kind}.json`);
+    let j = null;
+    for (let i = 0; i < 2 && !j; i++) {
+      try {
+        if (!/^https?:/.test(url)) j = JSON.parse(fs.readFileSync(url, "utf8"));
+        else { const r = await fetch(url, { headers: { "user-agent": "student-newsroom-results-desk (GitHub Actions)" }, signal: AbortSignal.timeout(20000) }); if (!r.ok) throw new Error(`cache answered ${r.status}`); j = await r.json(); }
+      } catch (e) { if (i) throw e; await new Promise((res) => setTimeout(res, 3000)); }
+    }
+    if (j?.ts) log(`civicAPI cache (${kind}): copy from ${Math.round((now - j.ts) / 1000)}s ago`);
+    return j;
+  } catch (e) { log(`civicAPI cache (${kind}) failed:`, e.message); return null; }
+}
 async function civicNational() {
-  if (!civicBase) return null;
+  if (!civicBase && !civicCache) return null;
+  const cached = await getCache("results");
+  const KEYS = { S: "senate", G: "gov", H: "house" };
   const ids = { S: 87528, G: 87535, H: 87524, ...(desk.sources?.civicRaceIds || {}) };
+  const raceDoc = async (ch) => cached?.[KEYS[ch]]?.region_results ? cached[KEYS[ch]] : getJSON(`race/${ids[ch]}`, `race-${ids[ch]}.json`);
   const out = { races: {}, house: { d: 0, r: 0 }, updated: null, ok: false, failed: [] };
   const allowTest = !!desk.allowTestData || process.env.ALLOW_TEST === "1";
   for (const ch of ["S", "G"]) {
     let doc;
-    try { doc = await getJSON(`race/${ids[ch]}`, `race-${ids[ch]}.json`); } catch (e) { log(`civicAPI ${ch === "S" ? "Senate" : "governors"} failed:`, e.message, "(keeping the last good numbers)"); out.failed.push(ch); continue; }
+    try { doc = await raceDoc(ch); } catch (e) { log(`civicAPI ${ch === "S" ? "Senate" : "governors"} failed:`, e.message, "(keeping the last good numbers)"); out.failed.push(ch); continue; }
     if (doc.test_data && !allowTest) { log(`civicAPI ${ch}: flagged as test data; ignored`); continue; }
     out.ok = true; out.updated = doc.last_updated || out.updated;
     for (const def of ch === "S" ? NAT.SENATE : NAT.GOVS) {
@@ -160,14 +181,15 @@ async function civicNational() {
     }
   }
   try {
-    const doc = await getJSON(`race/${ids.H}`, `race-${ids.H}.json`);
+    const doc = await raceDoc("H");
     if (doc.test_data && !allowTest) log("civicAPI House: flagged as test data; ignored");
     else {
       out.ok = true;
       let fc = state.national.houseForecast;
       if (!fc || !fc.fetched || now - new Date(fc.fetched) > 6 * 3600e3) {
         try {
-          const f = await getJSON("forecast/house/2026/civicapi", "forecast-house.json");
+          const fcache = await getCache("forecast");
+          const f = fcache?.house?.states ? fcache.house : await getJSON("forecast/house/2026/civicapi", "forecast-house.json");
           const cats = { sd: 0, ld: 0, tu: 0, lr: 0, sr: 0 }, watch = {};
           const cat = (r) => /^(safe|likely) d/i.test(r) ? "sd" : /^(lean|tilt) d/i.test(r) ? "ld" : /^toss/i.test(r) ? "tu" : /^(lean|tilt) r/i.test(r) ? "lr" : "sr";
           for (const [k, v] of Object.entries(f.states || {})) { const c = cat(v.rating || ""); cats[c]++; if (c === "ld" || c === "tu" || c === "lr") watch[k.toUpperCase()] = { rating: c, dn: v.democratic || "", rn: v.republican || "" }; }
